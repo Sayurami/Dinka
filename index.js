@@ -10,7 +10,7 @@ export default async function handler(req, res) {
 
     if (!action) return res.status(400).json({ status: false, message: "action missing" });
 
-    // ---------------- 1. SEARCH (JSON FEED) ----------------
+    // ---------------- 1. SEARCH ----------------
     if (action === "search") {
       const feedUrl = `https://dinkamovieslk.blogspot.com/feeds/posts/default?q=${encodeURIComponent(query)}&alt=json&max-results=10`;
       const { data } = await axios.get(feedUrl, { headers });
@@ -23,7 +23,7 @@ export default async function handler(req, res) {
       return res.json({ status: true, results: movies.length, data: movies });
     }
 
-    // ---------------- 2. MOVIE DETAILS (ENHANCED) ----------------
+    // ---------------- 2. MOVIE DETAILS & DOWNLOAD LINKS ----------------
     if (action === "movie") {
       if (!url) return res.status(400).json({ status: false, message: "url missing" });
 
@@ -32,48 +32,55 @@ export default async function handler(req, res) {
 
       const title = $(".post-title").first().text().trim() || $("h1").text().trim();
       
-      // CAST EXTRACTION (වැඩි දියුණු කළා)
-      const cast = [];
-      // ක්‍රමය 1: <ul> ලැයිස්තු පරීක්ෂාව
-      $("div.post-body ul li").each((i, el) => {
-        const text = $(el).text().trim();
-        if (text && text.length < 50) cast.push(text);
-      });
-      // ක්‍රමය 2: ලැයිස්තු නැතිනම් <p> ටැග් පරීක්ෂාව
-      if (cast.length === 0) {
-        $("div.post-body p").each((i, el) => {
-           const text = $(el).text();
-           if (text.includes(":") || text.includes("-")) { // නම සහ චරිතය වෙන් කර ඇත්නම්
-              cast.push(text.trim());
-           }
-        });
-      }
-
-      // DOWNLOAD LINKS (සෑම තැනම පරීක්ෂා කරයි)
       const dl_links = [];
+
+      // සයිට් එකේ තියෙන සියලුම ලින්ක්ස් (<a> tags) එකින් එක පරීක්ෂා කිරීම
       $("a").each((i, el) => {
         const href = $(el).attr("href") || "";
-        const text = $(el).text().trim() || "Download";
+        const text = $(el).text().trim().toLowerCase();
+        const imgInside = $(el).find("img").length > 0; // ලින්ක් එක ඇතුළේ පින්තූරයක් තිබේද?
 
-        // Vercel / Encoded links
-        if (href.includes("data=")) {
+        // 1. Vercel Encoded ලින්ක් එකක් නම් (බොහෝ අලුත් ෆිල්ම් වල මේක තියෙන්නේ)
+        if (href.includes("data=") && href.includes("vercel.app")) {
           try {
             const urlObj = new URL(href);
             const encodedData = urlObj.searchParams.get("data");
-            if (encodedData) {
-              const decoded = JSON.parse(Buffer.from(encodedData, 'base64').toString());
+            const decoded = JSON.parse(Buffer.from(encodedData, 'base64').toString());
+            
+            if (decoded.u) {
               dl_links.push({
-                quality: text.replace(/Download|now/gi, "").trim() || "Link " + (dl_links.length + 1),
+                quality: $(el).text().trim() || "Download Now",
                 direct_link: decoded.u
               });
             }
           } catch (e) {}
-        } 
-        // Direct Short links (da.gd, bit.ly etc)
-        else if (href.includes("da.gd") || (text.toLowerCase().includes("download") && href.includes("http"))) {
-           if (!dl_links.some(l => l.direct_link === href)) {
-              dl_links.push({ quality: text, direct_link: href });
-           }
+        }
+        
+        // 2. Encoded නැති සාමාන්‍ය Download ලින්ක් එකක් නම් (පැරණි ෆිල්ම් වල)
+        // ටෙලිග්‍රාම්, වට්ස්ඇප් හෝ බ්ලොගර් ඉමේජ් ලින්ක් අතහරින්න (Filter labels)
+        else if (
+          (text.includes("download") || imgInside) && 
+          href.includes("http") && 
+          !href.includes("whatsapp.com") && 
+          !href.includes("t.me") && 
+          !href.includes("blogger.googleusercontent.com")
+        ) {
+          // මෙහිදී 'da.gd' වැනි ඩිරෙක්ට් ලින්ක් එකතු කරගන්න
+          if (!dl_links.some(l => l.direct_link === href)) {
+             dl_links.push({
+               quality: $(el).text().trim() || "Download",
+               direct_link: href
+             });
+          }
+        }
+      });
+
+      // Cast (නළු නිළියන්) - මේක පෝස්ට් එකේ තියෙන විදිහ අනුව ගමු
+      const cast = [];
+      $("div.post-body").find("ul li, p").each((i, el) => {
+        const line = $(el).text().trim();
+        if (line.includes(":") || (line.length > 5 && line.length < 40 && !line.toLowerCase().includes("download"))) {
+          cast.push(line);
         }
       });
 
@@ -81,7 +88,7 @@ export default async function handler(req, res) {
         status: true,
         data: {
           title,
-          cast: cast.slice(0, 10), // මුල් 10 දෙනා පමණක්
+          cast: [...new Set(cast)].slice(0, 8), // Duplicate අයින් කර මුල් 8 දෙනා ගමු
           download_links: dl_links
         }
       });
