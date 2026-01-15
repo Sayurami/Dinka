@@ -7,7 +7,7 @@ export default async function handler(req, res) {
 
     if (!action) return res.status(400).json({ status: false, message: "action missing" });
 
-    // ---------------- SEARCH ----------------
+    // ---------------- 1. සෙවුම් Endpoint (SEARCH) ----------------
     if (action === "search") {
       if (!query) return res.status(400).json({ status: false, message: "query missing" });
 
@@ -16,63 +16,54 @@ export default async function handler(req, res) {
       const $ = cheerio.load(data);
 
       const movies = [];
-
-      // Updated selectors to match the "Latest Movies" grid shown in your screenshot
-      $("div.post-outer, article.post").each((i, el) => {
+      $("div.post-outer, article").each((i, el) => {
         const titleEl = $(el).find(".post-title a, h3 a");
         const title = titleEl.text().trim();
         const link = titleEl.attr("href");
-        // Captures the thumbnail from the style or img tag
         const image = $(el).find("img").attr("src") || "";
         
         if (title && link) {
           movies.push({ title, link, image });
         }
-       biographical drama-thriller});
+      });
 
       return res.json({ status: true, results: movies.length, data: movies });
     }
 
-    // ---------------- MOVIE DETAILS ----------------
+    // ---------------- 2. විස්තර ලබාගැනීමේ Endpoint (MOVIE DETAILS) ----------------
     if (action === "movie") {
       if (!url) return res.status(400).json({ status: false, message: "url missing" });
 
       const { data } = await axios.get(url);
       const $ = cheerio.load(data);
 
-      const title = $(".post-title").text().trim();
-      
-      // Extraction based on the screenshot text structure
+      const title = $(".post-title").first().text().trim();
       const description = $("div.post-body").text().split("---")[0].trim();
       
       const cast = [];
-      // Targeting the list after "ප්‍රධාන චරිත හා නළුයන්"
       $("div.post-body ul li").each((i, el) => {
         cast.push($(el).text().trim());
       });
 
       const dl_links = [];
-      // The screenshot shows a pink/purple "Download 480p" button
       $("a").each((i, el) => {
-        const text = $(el).text().toLowerCase();
         const href = $(el).attr("href") || "";
+        const text = $(el).text().trim();
         
-        if (text.includes("download") && href.includes("vercel.app")) {
-          // Extract the Base64 data from the Vercel URL
+        if (href.includes("vercel.app") && href.includes("data=")) {
           try {
             const urlObj = new URL(href);
             const encodedData = urlObj.searchParams.get("data");
             if (encodedData) {
               const decoded = JSON.parse(Buffer.from(encodedData, 'base64').toString());
-              // decoded.u contains the actual link (e.g., https://da.gd/mjpUco)
               dl_links.push({
-                quality: $(el).text().trim(),
+                quality: text,
                 direct_link: decoded.u,
                 original_redirect: href
               });
             }
           } catch (e) {
-            dl_links.push({ quality: $(el).text().trim(), link: href });
+            dl_links.push({ quality: text, link: href });
           }
         }
       });
