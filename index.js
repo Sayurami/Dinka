@@ -5,12 +5,11 @@ export default async function handler(req, res) {
   try {
     const { action, query, url, category } = req.query;
 
-    // ---- Validate action ----
     if (!action) return res.status(400).json({ status: false, message: "action missing" });
 
-    // ---- HOME ----
+    // ---------- HOME ----------
     if (action === "home") {
-      const { data } = await axios.get("https://dinkamovieslk.blogspot.com/?m=1", { timeout: 8000 });
+      const { data } = await axios.get("https://dinkamovieslk.blogspot.com/?m=1", { timeout: 5000 });
       const $ = cheerio.load(data);
 
       const menu = [];
@@ -30,12 +29,12 @@ export default async function handler(req, res) {
       return res.json({ status: true, menu, categories });
     }
 
-    // ---- SEARCH ----
+    // ---------- SEARCH ----------
     if (action === "search") {
       if (!query) return res.status(400).json({ status: false, message: "query missing" });
 
       const urlSearch = `https://dinkamovieslk.blogspot.com/search?q=${encodeURIComponent(query)}&m=1`;
-      const { data } = await axios.get(urlSearch, { timeout: 8000 });
+      const { data } = await axios.get(urlSearch, { timeout: 5000 });
       const $ = cheerio.load(data);
 
       const movies = [];
@@ -51,12 +50,12 @@ export default async function handler(req, res) {
       return res.json({ status: true, data: movies });
     }
 
-    // ---- CATEGORY ----
+    // ---------- CATEGORY ----------
     if (action === "category") {
       if (!category) return res.status(400).json({ status: false, message: "category missing" });
 
       const urlCat = `https://dinkamovieslk.blogspot.com/search/label/${encodeURIComponent(category)}?m=1`;
-      const { data } = await axios.get(urlCat, { timeout: 8000 });
+      const { data } = await axios.get(urlCat, { timeout: 5000 });
       const $ = cheerio.load(data);
 
       const movies = [];
@@ -72,11 +71,11 @@ export default async function handler(req, res) {
       return res.json({ status: true, data: movies });
     }
 
-    // ---- MOVIE DETAILS ----
+    // ---------- MOVIE DETAILS ----------
     if (action === "movie") {
       if (!url) return res.status(400).json({ status: false, message: "url missing" });
 
-      const { data } = await axios.get(url, { timeout: 8000 });
+      const { data } = await axios.get(url, { timeout: 5000 });
       const $ = cheerio.load(data);
 
       const titleEl = $("h3.post-title a");
@@ -91,14 +90,12 @@ export default async function handler(req, res) {
       const imdb = imdbMatch ? imdbMatch[1] : "";
       const description = $("div.post-body > p").first().text().trim() || "";
 
-      // Cast
       const cast = [];
       $("div.post-body p:contains('ප්‍රධාන චරිත හා නළුයන්')").nextAll("ul li").each((i, el) => {
         const actor = $(el).text().trim();
         if (actor) cast.push(actor);
       });
 
-      // Download links
       const dl_links = [];
       $("a:contains('Download')").each((i, el) => {
         const quality = $(el).text().trim() || "";
@@ -113,6 +110,7 @@ export default async function handler(req, res) {
     }
 
     return res.status(400).json({ status: false, message: "Invalid action" });
+
   } catch (err) {
     return res.status(500).json({ status: false, error: err.message });
   }
