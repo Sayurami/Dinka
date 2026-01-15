@@ -3,35 +3,34 @@ import cheerio from "cheerio";
 
 export default async function handler(req, res) {
   try {
-    const { endpoint, query, url, category } = req.query;
+    const { action, query, url, category } = req.query;
 
-    // ===== HOME + MENU + CATEGORIES =====
-    if (endpoint === "home") {
+    // ---------------- HOME / MENU ----------------
+    if (action === "home") {
       const { data } = await axios.get("https://dinkamovieslk.blogspot.com/?m=1");
       const $ = cheerio.load(data);
 
-      // Main menu
       const menu = [];
       $("a").each((i, el) => {
         const text = $(el).text().trim();
-        const href = $(el).attr("href");
-        if (text && href && !href.startsWith("#")) menu.push({ text, link: href });
+        const link = $(el).attr("href");
+        if (text && link && !link.startsWith("#")) menu.push({ text, link });
       });
 
-      // Categories
       const categories = [];
       $("div.widget-content ul li a").each((i, el) => {
         const text = $(el).text().trim();
-        const href = $(el).attr("href");
-        if (text && href) categories.push({ text, link: href });
+        const link = $(el).attr("href");
+        if (text && link) categories.push({ text, link });
       });
 
       return res.json({ status: true, menu, categories });
     }
 
-    // ===== SEARCH =====
-    if (endpoint === "search") {
+    // ---------------- SEARCH ----------------
+    if (action === "search") {
       if (!query) return res.json({ status: false, message: "Query missing" });
+
       const urlSearch = `https://dinkamovieslk.blogspot.com/search?q=${encodeURIComponent(query)}&m=1`;
       const { data } = await axios.get(urlSearch);
       const $ = cheerio.load(data);
@@ -48,9 +47,10 @@ export default async function handler(req, res) {
       return res.json({ status: true, data: movies });
     }
 
-    // ===== CATEGORY =====
-    if (endpoint === "category") {
+    // ---------------- CATEGORY ----------------
+    if (action === "category") {
       if (!category) return res.json({ status: false, message: "Category missing" });
+
       const urlCat = `https://dinkamovieslk.blogspot.com/search/label/${encodeURIComponent(category)}?m=1`;
       const { data } = await axios.get(urlCat);
       const $ = cheerio.load(data);
@@ -67,14 +67,15 @@ export default async function handler(req, res) {
       return res.json({ status: true, data: movies });
     }
 
-    // ===== MOVIE DETAILS =====
-    if (endpoint === "movie") {
+    // ---------------- MOVIE DETAILS ----------------
+    if (action === "movie") {
       if (!url) return res.json({ status: false, message: "URL missing" });
+
       const { data } = await axios.get(url);
       const $ = cheerio.load(data);
 
       const title = $("h3.post-title a").text().trim();
-      const yearMatch = $("h3.post-title a").text().match(/\d{4}/);
+      const yearMatch = title.match(/\d{4}/);
       const year = yearMatch ? yearMatch[0] : "";
       const director = $("div.post-body p:contains('අධ්‍යක්ෂක')").text().replace("අධ්‍යක්ෂක:", "").trim();
       const language = $("div.post-body p:contains('භාෂාව')").text().replace("භාෂාව:", "").trim();
@@ -83,13 +84,11 @@ export default async function handler(req, res) {
       const imdb = imdbMatch ? imdbMatch[1] : "";
       const description = $("div.post-body > p").first().text().trim();
 
-      // Cast
       const cast = [];
       $("div.post-body p:contains('ප්‍රධාන චරිත හා නළුයන්')").nextAll("ul li").each((i, el) => {
         cast.push($(el).text().trim());
       });
 
-      // Download links
       const dl_links = [];
       $("a:contains('Download')").each((i, el) => {
         dl_links.push({
@@ -104,8 +103,7 @@ export default async function handler(req, res) {
       });
     }
 
-    return res.json({ status: false, message: "Invalid endpoint" });
-
+    return res.json({ status: false, message: "Invalid action" });
   } catch (err) {
     return res.json({ status: false, error: err.message });
   }
