@@ -24,51 +24,54 @@ export default async function handler(req, res) {
       return res.json({ status: true, results: movies.length, data: movies });
     }
 
-    // ---------------- 2. MOVIE DETAILS & DL LINKS ----------------
+    // ---------------- 2. MOVIE DETAILS (SUPER SCRAPE) ----------------
     if (action === "movie") {
       if (!url) return res.status(400).json({ status: false, message: "url missing" });
 
       const { data: html } = await axios.get(url, { headers });
       const $ = cheerio.load(html);
-      const postContent = $("div.post-body").html() || ""; // මුළු පෝස්ට් එකේම HTML එක
+      const fullHtml = $.html(); // මුළු පෝස්ට් එකේම source code එක
+      const bodyText = $("div.post-body").text();
 
       const title = $(".post-title").first().text().trim() || $("h1").text().trim();
       const dl_links = [];
 
-      // ලින්ක්ස් සෙවීමේ ප්‍රධාන ලොජික් එක
-      // 1. Regex එකක් මගින් HTML එක ඇතුළේ තියෙන සියලුම da.gd ලින්ක්ස් සොයා ගැනීම
-      const shortLinkRegex = /https:\/\/da\.gd\/[a-zA-Z0-9]+/g;
-      const shortLinks = postContent.match(shortLinkRegex) || [];
+      // ක්‍රමය 1: Regex මගින් da.gd ලින්ක්ස් සෙවීම (Text එක ඇතුළේ තිබුණත් අහු වෙනවා)
+      const dagdRegex = /https:\/\/da\.gd\/[a-zA-Z0-9]+/g;
+      const dagdMatches = fullHtml.match(dagdRegex) || [];
       
-      shortLinks.forEach(link => {
+      dagdMatches.forEach(link => {
         if (!dl_links.some(l => l.direct_link === link)) {
-          dl_links.push({ quality: "Direct Download", direct_link: link });
+          dl_links.push({ quality: "Download Link", direct_link: link });
         }
       });
 
-      // 2. Vercel Encoded ලින්ක්ස් පරීක්ෂාව
-      $("a").each((i, el) => {
-        const href = $(el).attr("href") || "";
-        if (href.includes("vercel.app") && href.includes("data=")) {
-          try {
-            const encodedData = new URL(href).searchParams.get("data");
+      // ක්‍රමය 2: Vercel Base64 ලින්ක්ස් සෙවීම
+      const vercelRegex = /https:\/\/dinkamovieslk-dl\.vercel\.app\/\?data=[a-zA-Z0-9%=\-_]+/g;
+      const vercelMatches = fullHtml.match(vercelRegex) || [];
+
+      vercelMatches.forEach(link => {
+        try {
+          const urlObj = new URL(link.replace(/&amp;/g, '&'));
+          const encodedData = urlObj.searchParams.get("data");
+          if (encodedData) {
             const decoded = JSON.parse(Buffer.from(encodedData, 'base64').toString());
             if (decoded.u && !dl_links.some(l => l.direct_link === decoded.u)) {
-              dl_links.push({ quality: "Encoded Download", direct_link: decoded.u });
+              dl_links.push({ quality: "Direct Download", direct_link: decoded.u });
             }
-          } catch (e) {}
-        }
+          }
+        } catch (e) {}
       });
 
-      // 3. Cast (නළු නිළියන්) - ටිකක් වෙනස් විදිහකට සෙවීම
+      // නළු නිළියන් සෙවීම (Cast)
       const cast = [];
-      $(".post-body").find("li, p, div").each((i, el) => {
-        const txt = $(el).text().trim();
-        // නමක් සහ චරිතයක් තියෙන පේළි අහුලගමු
-        if ((txt.includes(":") || txt.includes("-")) && txt.length < 50 && txt.length > 5) {
-          if(!txt.toLowerCase().includes("download") && !txt.toLowerCase().includes("upload")) {
-             cast.push(txt);
-          }
+      const castSection = bodyText.split("ප්‍රධාන චරිත")[1] || bodyText;
+      const potentialNames = castSection.split("\n");
+      
+      potentialNames.forEach(name => {
+        const cleanName = name.trim();
+        if (cleanName.includes(":") && cleanName.length < 50) {
+          cast.push(cleanName);
         }
       });
 
