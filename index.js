@@ -16,6 +16,8 @@ export default async function handler(req, res) {
       const $ = cheerio.load(data);
 
       const movies = [];
+
+      // Updated selectors for current theme
       $("article, div.post-outer").each((i, el) => {
         const titleEl = $(el).find("h3.post-title a");
         const title = titleEl.text().trim();
