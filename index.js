@@ -12,54 +12,79 @@ export default async function handler(req, res) {
       if (!query) return res.status(400).json({ status: false, message: "query missing" });
 
       const urlSearch = `https://dinkamovieslk.blogspot.com/search?q=${encodeURIComponent(query)}&m=1`;
-      const { data } = await axios.get(urlSearch, { timeout: 5000 });
+      const { data } = await axios.get(urlSearch);
       const $ = cheerio.load(data);
 
       const movies = [];
 
-      // Updated selectors for current theme
-      $("article, div.post-outer").each((i, el) => {
-        const titleEl = $(el).find("h3.post-title a");
+      // Updated selectors to match the "Latest Movies" grid shown in your screenshot
+      $("div.post-outer, article.post").each((i, el) => {
+        const titleEl = $(el).find(".post-title a, h3 a");
         const title = titleEl.text().trim();
-        const link = titleEl.attr("href") || "";
+        const link = titleEl.attr("href");
+        // Captures the thumbnail from the style or img tag
         const image = $(el).find("img").attr("src") || "";
-        const date = $(el).find("h2.date-header span").text().trim() || "";
-        if (title && link) movies.push({ title, link, image, date });
-      });
+        
+        if (title && link) {
+          movies.push({ title, link, image });
+        }
+       biographical drama-thriller});
 
-      return res.json({ status: true, data: movies });
+      return res.json({ status: true, results: movies.length, data: movies });
     }
 
     // ---------------- MOVIE DETAILS ----------------
     if (action === "movie") {
       if (!url) return res.status(400).json({ status: false, message: "url missing" });
 
-      const { data } = await axios.get(url, { timeout: 5000 });
+      const { data } = await axios.get(url);
       const $ = cheerio.load(data);
 
-      const title = $("h3.post-title a").text().trim() || "Unknown";
-      const yearMatch = title.match(/\d{4}/);
-      const year = yearMatch ? yearMatch[0] : "";
-      const description = $("div.post-body > p").first().text().trim() || "";
-
-      // Cast extraction
+      const title = $(".post-title").text().trim();
+      
+      // Extraction based on the screenshot text structure
+      const description = $("div.post-body").text().split("---")[0].trim();
+      
       const cast = [];
-      $("p:contains('ප්‍රධාන චරිත හා නළුයන්')").nextAll("ul li").each((i, el) => {
-        const actor = $(el).text().trim();
-        if (actor) cast.push(actor);
+      // Targeting the list after "ප්‍රධාන චරිත හා නළුයන්"
+      $("div.post-body ul li").each((i, el) => {
+        cast.push($(el).text().trim());
       });
 
-      // Download links extraction
       const dl_links = [];
-      $("a:contains('Download')").each((i, el) => {
-        const quality = $(el).text().trim() || "";
-        const linkAttr = $(el).attr("href") || "";
-        if (linkAttr) dl_links.push({ quality, link: linkAttr });
+      // The screenshot shows a pink/purple "Download 480p" button
+      $("a").each((i, el) => {
+        const text = $(el).text().toLowerCase();
+        const href = $(el).attr("href") || "";
+        
+        if (text.includes("download") && href.includes("vercel.app")) {
+          // Extract the Base64 data from the Vercel URL
+          try {
+            const urlObj = new URL(href);
+            const encodedData = urlObj.searchParams.get("data");
+            if (encodedData) {
+              const decoded = JSON.parse(Buffer.from(encodedData, 'base64').toString());
+              // decoded.u contains the actual link (e.g., https://da.gd/mjpUco)
+              dl_links.push({
+                quality: $(el).text().trim(),
+                direct_link: decoded.u,
+                original_redirect: href
+              });
+            }
+          } catch (e) {
+            dl_links.push({ quality: $(el).text().trim(), link: href });
+          }
+        }
       });
 
       return res.json({
         status: true,
-        data: { title, year, description, cast, download_links: dl_links }
+        data: {
+          title,
+          description: description.substring(0, 300) + "...",
+          cast,
+          download_links: dl_links
+        }
       });
     }
 
