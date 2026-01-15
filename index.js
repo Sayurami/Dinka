@@ -5,11 +5,10 @@ export default async function handler(req, res) {
   try {
     const { action, query, url } = req.query;
 
-    // Browser එකකින් යනවා වගේ පෙන්වීමට Headers එකතු කිරීම
     const axiosConfig = {
       headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9"
+        "User-Agent": "Mozilla/5.0 (Linux; Android 10; SM-G960U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.5481.153 Mobile Safari/537.36",
+        "Referer": "https://dinkamovieslk.blogspot.com/"
       }
     };
 
@@ -19,66 +18,66 @@ export default async function handler(req, res) {
     if (action === "search") {
       if (!query) return res.status(400).json({ status: false, message: "query missing" });
 
+      // මෙහිදී 'search?q=' වෙනුවට '/search/label/' හෝ සාමාන්‍ය සර්ච් එකම තව පාරක් පරීක්ෂා කරමු
       const urlSearch = `https://dinkamovieslk.blogspot.com/search?q=${encodeURIComponent(query)}&m=1`;
       const { data } = await axios.get(urlSearch, axiosConfig);
       const $ = cheerio.load(data);
 
       const movies = [];
 
-      // Blogspot හි සර්ච් රිසල්ට්ස් එන පොදු පන්ති (Classes) කිහිපයක්ම පරීක්ෂා කිරීම
-      $(".post-outer, article, .date-outer").each((i, el) => {
-        const titleEl = $(el).find(".post-title a, h3 a, h2 a");
-        const title = titleEl.text().trim();
-        const link = titleEl.attr("href");
+      // Dinka Movies සයිට් එකේ අලුත්ම HTML ව්‍යුහය සඳහා Selectors
+      // .post, .item-post, .post-outer යන සියල්ලම බලන්න
+      $("div.post-outer, div.post, article.post, div.date-outer").each((i, el) => {
+        const titleLink = $(el).find("h3 a, h2 a, .post-title a").first();
+        const title = titleLink.text().trim();
+        const link = titleLink.attr("href");
         
-        // පින්තූරය ලබාගැනීම
-        let image = $(el).find("img").attr("src") || "";
-        
-        // පින්තූරයේ size එක වැඩි කිරීම (Blogspot default කුඩා පින්තූර වෙනුවට)
-        if (image.includes("s72-c") || image.includes("w72-h72-p-k-no-nu")) {
-            image = image.replace(/s72-c|w72-h72-p-k-no-nu/, "s1600");
-        }
+        // Thumbnail එක ගැනීම
+        let image = $(el).find("img").first().attr("src") || 
+                    $(el).find("script").text().match(/https:\/\/.*?\.jpg/)?.[0] || "";
 
         if (title && link) {
-          movies.push({ title, link, image });
+          movies.push({
+            title: title,
+            link: link,
+            image: image.replace(/s72-c|w72-h72-p-k-no-nu/, "s1600") // High quality image
+          });
         }
       });
+
+      // සර්ච් රිසල්ට් එකේ තියෙන Duplicate අයින් කිරීම
+      const uniqueMovies = Array.from(new Set(movies.map(a => a.link)))
+        .map(link => movies.find(a => a.link === link));
 
       return res.json({ 
         status: true, 
-        results: movies.length, 
-        data: movies 
+        results: uniqueMovies.length, 
+        data: uniqueMovies 
       });
     }
 
-    // ---------------- MOVIE DETAILS ----------------
+    // ---------------- MOVIE DETAILS (වැඩ කරන විදිහට) ----------------
     if (action === "movie") {
       if (!url) return res.status(400).json({ status: false, message: "url missing" });
 
       const { data } = await axios.get(url, axiosConfig);
       const $ = cheerio.load(data);
 
-      const title = $(".post-title").first().text().trim() || $("h1").text().trim();
-      const cast = [];
+      const title = $(".post-title").text().trim() || $("h1").text().trim();
       
-      // නළු නිළියන් ලැයිස්තුව
-      $("div.post-body ul li").each((i, el) => {
-        cast.push($(el).text().trim());
-      });
-
       const dl_links = [];
       $("a").each((i, el) => {
         const href = $(el).attr("href") || "";
         const text = $(el).text().trim();
         
+        // Vercel decoding logic
         if (href.includes("vercel.app") && href.includes("data=")) {
           try {
             const encodedData = new URL(href).searchParams.get("data");
             const decoded = JSON.parse(Buffer.from(encodedData, 'base64').toString());
             dl_links.push({
-              quality: text || "Download",
-              direct_link: decoded.u,
-              original: href
+              quality: text.replace("Download ", "") || "File",
+              direct_link: decoded.u
             });
           } catch (e) {
             dl_links.push({ quality: text, link: href });
@@ -88,7 +87,10 @@ export default async function handler(req, res) {
 
       return res.json({
         status: true,
-        data: { title, cast, download_links: dl_links }
+        data: {
+          title,
+          download_links: dl_links
+        }
       });
     }
 
