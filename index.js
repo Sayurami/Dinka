@@ -1,102 +1,86 @@
 import axios from "axios";
-import * as cheerio from "cheerio";
 
 export default async function handler(req, res) {
   try {
     const { action, query, url } = req.query;
 
-    const axiosConfig = {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Linux; Android 10; SM-G960U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.5481.153 Mobile Safari/537.36",
-        "Referer": "https://dinkamovieslk.blogspot.com/"
-      }
+    const headers = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"
     };
 
     if (!action) return res.status(400).json({ status: false, message: "action missing" });
 
-    // ---------------- SEARCH ----------------
+    // ---------------- සෙවුම් කොටස (SEARCH හරහා JSON FEED) ----------------
     if (action === "search") {
       if (!query) return res.status(400).json({ status: false, message: "query missing" });
 
-      // මෙහිදී 'search?q=' වෙනුවට '/search/label/' හෝ සාමාන්‍ය සර්ච් එකම තව පාරක් පරීක්ෂා කරමු
-      const urlSearch = `https://dinkamovieslk.blogspot.com/search?q=${encodeURIComponent(query)}&m=1`;
-      const { data } = await axios.get(urlSearch, axiosConfig);
-      const $ = cheerio.load(data);
+      // Blogspot වල සර්ච් එකට තියෙන හොඳම ක්‍රමය මේකයි
+      const feedUrl = `https://dinkamovieslk.blogspot.com/feeds/posts/default?q=${encodeURIComponent(query)}&alt=json&max-results=10`;
+      
+      const { data } = await axios.get(feedUrl, { headers });
+      const entries = data.feed.entry || [];
 
-      const movies = [];
-
-      // Dinka Movies සයිට් එකේ අලුත්ම HTML ව්‍යුහය සඳහා Selectors
-      // .post, .item-post, .post-outer යන සියල්ලම බලන්න
-      $("div.post-outer, div.post, article.post, div.date-outer").each((i, el) => {
-        const titleLink = $(el).find("h3 a, h2 a, .post-title a").first();
-        const title = titleLink.text().trim();
-        const link = titleLink.attr("href");
+      const movies = entries.map(entry => {
+        const title = entry.title.$t;
+        const link = entry.link.find(l => l.rel === "alternate").href;
         
-        // Thumbnail එක ගැනීම
-        let image = $(el).find("img").first().attr("src") || 
-                    $(el).find("script").text().match(/https:\/\/.*?\.jpg/)?.[0] || "";
-
-        if (title && link) {
-          movies.push({
-            title: title,
-            link: link,
-            image: image.replace(/s72-c|w72-h72-p-k-no-nu/, "s1600") // High quality image
-          });
+        // පින්තූරය ගැනීම
+        let image = "";
+        if (entry.media$thumbnail) {
+          image = entry.media$thumbnail.url.replace(/\/s72\-c/, "/s1600"); // High Quality
+        } else if (entry.content && entry.content.$t) {
+          const imgMatch = entry.content.$t.match(/src="([^"]+)"/);
+          image = imgMatch ? imgMatch[1] : "";
         }
-      });
 
-      // සර්ච් රිසල්ට් එකේ තියෙන Duplicate අයින් කිරීම
-      const uniqueMovies = Array.from(new Set(movies.map(a => a.link)))
-        .map(link => movies.find(a => a.link === link));
+        return { title, link, image };
+      });
 
       return res.json({ 
         status: true, 
-        results: uniqueMovies.length, 
-        data: uniqueMovies 
+        results: movies.length, 
+        data: movies 
       });
     }
 
-    // ---------------- MOVIE DETAILS (වැඩ කරන විදිහට) ----------------
+    // ---------------- විස්තර ගැනීම (MOVIE DETAILS) ----------------
     if (action === "movie") {
       if (!url) return res.status(400).json({ status: false, message: "url missing" });
 
-      const { data } = await axios.get(url, axiosConfig);
-      const $ = cheerio.load(data);
+      const { data: html } = await axios.get(url, { headers });
+      
+      // Cheerio පාවිච්චි කරලා Download links විතරක් ගමු
+      const cheerio = await import("cheerio");
+      const $ = cheerio.load(html);
 
       const title = $(".post-title").text().trim() || $("h1").text().trim();
-      
       const dl_links = [];
+
       $("a").each((i, el) => {
         const href = $(el).attr("href") || "";
         const text = $(el).text().trim();
         
-        // Vercel decoding logic
         if (href.includes("vercel.app") && href.includes("data=")) {
           try {
             const encodedData = new URL(href).searchParams.get("data");
             const decoded = JSON.parse(Buffer.from(encodedData, 'base64').toString());
             dl_links.push({
-              quality: text.replace("Download ", "") || "File",
+              quality: text.replace("Download", "").trim() || "Download",
               direct_link: decoded.u
             });
-          } catch (e) {
-            dl_links.push({ quality: text, link: href });
-          }
+          } catch (e) {}
         }
       });
 
       return res.json({
         status: true,
-        data: {
-          title,
-          download_links: dl_links
-        }
+        data: { title, download_links: dl_links }
       });
     }
 
     return res.status(400).json({ status: false, message: "Invalid action" });
 
   } catch (err) {
-    return res.status(500).json({ status: false, error: err.message });
+    return res.status(500).json({ status: false, error: err.message, data: [] });
   }
 }
