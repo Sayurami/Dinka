@@ -16,8 +16,7 @@ export default async function handler(req, res) {
       const $ = cheerio.load(data);
 
       const movies = [];
-      // updated selectors to match current theme
-      $("div.post-outer").each((i, el) => {
+      $("article, div.post-outer").each((i, el) => {
         const titleEl = $(el).find("h3.post-title a");
         const title = titleEl.text().trim();
         const link = titleEl.attr("href") || "";
@@ -36,12 +35,9 @@ export default async function handler(req, res) {
       const { data } = await axios.get(url, { timeout: 5000 });
       const $ = cheerio.load(data);
 
-      const titleEl = $("h3.post-title a");
-      const title = titleEl.text().trim() || "Unknown";
-
+      const title = $("h3.post-title a").text().trim() || "Unknown";
       const yearMatch = title.match(/\d{4}/);
       const year = yearMatch ? yearMatch[0] : "";
-
       const description = $("div.post-body > p").first().text().trim() || "";
 
       // Cast extraction
