@@ -24,54 +24,47 @@ export default async function handler(req, res) {
       return res.json({ status: true, results: movies.length, data: movies });
     }
 
-    // ---------------- 2. MOVIE DETAILS (SUPER SCRAPE) ----------------
+    // ---------------- 2. MOVIE DETAILS (GOOGLE DRIVE SUPPORTED) ----------------
     if (action === "movie") {
       if (!url) return res.status(400).json({ status: false, message: "url missing" });
 
       const { data: html } = await axios.get(url, { headers });
       const $ = cheerio.load(html);
-      const fullHtml = $.html(); // මුළු පෝස්ට් එකේම source code එක
-      const bodyText = $("div.post-body").text();
+      const pageSource = $.html(); 
 
       const title = $(".post-title").first().text().trim() || $("h1").text().trim();
       const dl_links = [];
 
-      // ක්‍රමය 1: Regex මගින් da.gd ලින්ක්ස් සෙවීම (Text එක ඇතුළේ තිබුණත් අහු වෙනවා)
-      const dagdRegex = /https:\/\/da\.gd\/[a-zA-Z0-9]+/g;
-      const dagdMatches = fullHtml.match(dagdRegex) || [];
-      
-      dagdMatches.forEach(link => {
-        if (!dl_links.some(l => l.direct_link === link)) {
-          dl_links.push({ quality: "Download Link", direct_link: link });
-        }
-      });
-
-      // ක්‍රමය 2: Vercel Base64 ලින්ක්ස් සෙවීම
-      const vercelRegex = /https:\/\/dinkamovieslk-dl\.vercel\.app\/\?data=[a-zA-Z0-9%=\-_]+/g;
-      const vercelMatches = fullHtml.match(vercelRegex) || [];
+      // 1. Vercel Encoded Link wala thiyena Google Drive links ganna method eka
+      const vercelRegex = /https:\/\/dinkamovieslk-dl\.vercel\.app\/\?data=[a-zA-Z0-9%=\-_.]+/g;
+      const vercelMatches = pageSource.match(vercelRegex) || [];
 
       vercelMatches.forEach(link => {
         try {
-          const urlObj = new URL(link.replace(/&amp;/g, '&'));
-          const encodedData = urlObj.searchParams.get("data");
+          const cleanUrl = link.replace(/&amp;/g, '&');
+          const urlParams = new URL(cleanUrl);
+          const encodedData = urlParams.searchParams.get("data");
+          
           if (encodedData) {
             const decoded = JSON.parse(Buffer.from(encodedData, 'base64').toString());
-            if (decoded.u && !dl_links.some(l => l.direct_link === decoded.u)) {
-              dl_links.push({ quality: "Direct Download", direct_link: decoded.u });
+            if (decoded.u) {
+              dl_links.push({
+                quality: "Download (G-Drive)",
+                direct_link: decoded.u,
+                type: decoded.y || "direct"
+              });
             }
           }
         } catch (e) {}
       });
 
-      // නළු නිළියන් සෙවීම (Cast)
-      const cast = [];
-      const castSection = bodyText.split("ප්‍රධාන චරිත")[1] || bodyText;
-      const potentialNames = castSection.split("\n");
-      
-      potentialNames.forEach(name => {
-        const cleanName = name.trim();
-        if (cleanName.includes(":") && cleanName.length < 50) {
-          cast.push(cleanName);
+      // 2. da.gd saha anith short links ganna method eka
+      const generalRegex = /https:\/\/(da\.gd|bit\.ly|mega\.nz|drive\.google\.com)\/[a-zA-Z0-9?%=\-_/.]+/g;
+      const generalMatches = pageSource.match(generalRegex) || [];
+
+      generalMatches.forEach(link => {
+        if (!dl_links.some(l => l.direct_link === link) && !link.includes("uc?export")) {
+          dl_links.push({ quality: "Direct Download", direct_link: link });
         }
       });
 
@@ -79,7 +72,6 @@ export default async function handler(req, res) {
         status: true,
         data: {
           title,
-          cast: [...new Set(cast)].slice(0, 10),
           download_links: dl_links
         }
       });
