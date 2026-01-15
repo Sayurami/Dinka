@@ -10,7 +10,24 @@ export default async function handler(req, res) {
 
     if (!action) return res.status(400).json({ status: false, message: "action missing" });
 
-    // ---------------- MOVIE DETAILS & DOWNLOAD LINKS ----------------
+    // ---------------- 1. සෙවුම් කොටස (SEARCH) ----------------
+    if (action === "search") {
+      if (!query) return res.status(400).json({ status: false, message: "query missing" });
+
+      const feedUrl = `https://dinkamovieslk.blogspot.com/feeds/posts/default?q=${encodeURIComponent(query)}&alt=json&max-results=10`;
+      const { data } = await axios.get(feedUrl, { headers });
+      const entries = data.feed.entry || [];
+
+      const movies = entries.map(entry => ({
+        title: entry.title.$t,
+        link: entry.link.find(l => l.rel === "alternate").href,
+        image: entry.media$thumbnail ? entry.media$thumbnail.url.replace(/\/s72\-c/, "/s1600") : ""
+      }));
+
+      return res.json({ status: true, results: movies.length, data: movies });
+    }
+
+    // ---------------- 2. විස්තර සහ ලින්ක් (DETAILS & DL LINKS) ----------------
     if (action === "movie") {
       if (!url) return res.status(400).json({ status: false, message: "url missing" });
 
@@ -18,32 +35,30 @@ export default async function handler(req, res) {
       const $ = cheerio.load(html);
 
       const title = $(".post-title").first().text().trim() || $("h1").text().trim();
-      const dl_links = [];
+      
+      // නළු නිළියන් සහ විස්තර
+      const cast = [];
+      $("div.post-body ul li").each((i, el) => {
+        cast.push($(el).text().trim());
+      });
 
-      // සයිට් එකේ තියෙන සියලුම ලින්ක්ස් පරීක්ෂා කිරීම
+      const dl_links = [];
       $("a").each((i, el) => {
         const href = $(el).attr("href") || "";
         const text = $(el).text().trim();
-        
-        // Vercel decoding logic - මේක තමයි රහස් ලින්ක් එක ගලවන්නේ
+
+        // Vercel ලින්ක් එක ඇතුළේ තියෙන ලින්ක් එක Decode කිරීම
         if (href.includes("vercel.app") && href.includes("data=")) {
           try {
-            const urlObj = new URL(href);
-            const encodedData = urlObj.searchParams.get("data");
-            
+            const encodedData = new URL(href).searchParams.get("data");
             if (encodedData) {
               const decoded = JSON.parse(Buffer.from(encodedData, 'base64').toString());
-              
               dl_links.push({
-                quality: text || "Download Now",
-                direct_link: decoded.u, // මෙතන තමයි da.gd ලින්ක් එක එන්නේ
-                source: "Direct"
+                quality: text || "Download",
+                direct_link: decoded.u // මෙය da.gd ලින්ක් එකයි
               });
             }
-          } catch (e) {
-            // Decode කරන්න බැරි වුණොත් සාමාන්‍ය ලින්ක් එක දෙනවා
-            dl_links.push({ quality: text, link: href });
-          }
+          } catch (e) {}
         }
       });
 
@@ -51,13 +66,14 @@ export default async function handler(req, res) {
         status: true,
         data: {
           title,
+          cast,
           download_links: dl_links
         }
       });
     }
 
-    // (Search කොටස කලින් දීපු විදිහටම මෙතනට දාගන්න)
-    
+    return res.status(400).json({ status: false, message: "Invalid action" });
+
   } catch (err) {
     return res.status(500).json({ status: false, error: err.message });
   }
