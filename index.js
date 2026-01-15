@@ -1,5 +1,5 @@
 import axios from "axios";
-import * as cheerio from "cheerio"; // ✅ Fixed import
+import * as cheerio from "cheerio";
 
 export default async function handler(req, res) {
   try {
@@ -7,17 +7,10 @@ export default async function handler(req, res) {
 
     if (!action) return res.status(400).json({ status: false, message: "action missing" });
 
-    // ---------- HOME ----------
+    // ---------------- HOME ----------------
     if (action === "home") {
       const { data } = await axios.get("https://dinkamovieslk.blogspot.com/?m=1", { timeout: 5000 });
       const $ = cheerio.load(data);
-
-      const menu = [];
-      $("a").each((i, el) => {
-        const text = $(el).text().trim();
-        const link = $(el).attr("href");
-        if (text && link && !link.startsWith("#")) menu.push({ text, link });
-      });
 
       const categories = [];
       $("div.widget-content ul li a").each((i, el) => {
@@ -26,10 +19,20 @@ export default async function handler(req, res) {
         if (text && link) categories.push({ text, link });
       });
 
-      return res.json({ status: true, menu, categories });
+      const posts = [];
+      $("div.blog-posts div.post-outer").each((i, el) => {
+        const titleEl = $(el).find("h3.post-title a");
+        const title = titleEl.text().trim();
+        const link = titleEl.attr("href") || "";
+        const image = $(el).find("div.post-body img").attr("src") || "";
+        const date = $(el).find("h2.date-header span").text().trim() || "";
+        if (title && link) posts.push({ title, link, image, date });
+      });
+
+      return res.json({ status: true, categories, posts });
     }
 
-    // ---------- SEARCH ----------
+    // ---------------- SEARCH ----------------
     if (action === "search") {
       if (!query) return res.status(400).json({ status: false, message: "query missing" });
 
@@ -38,9 +41,10 @@ export default async function handler(req, res) {
       const $ = cheerio.load(data);
 
       const movies = [];
-      $("div.blog-posts div.post-outer").each((i, el) => {
+      // handle multiple possible post containers
+      $("div.blog-posts div.post-outer, div.post-outer").each((i, el) => {
         const titleEl = $(el).find("h3.post-title a");
-        const title = titleEl.length ? titleEl.text().trim() : "Unknown";
+        const title = titleEl.text().trim();
         const link = titleEl.attr("href") || "";
         const image = $(el).find("div.post-body img").attr("src") || "";
         const date = $(el).find("h2.date-header span").text().trim() || "";
@@ -50,7 +54,7 @@ export default async function handler(req, res) {
       return res.json({ status: true, data: movies });
     }
 
-    // ---------- CATEGORY ----------
+    // ---------------- CATEGORY ----------------
     if (action === "category") {
       if (!category) return res.status(400).json({ status: false, message: "category missing" });
 
@@ -59,9 +63,9 @@ export default async function handler(req, res) {
       const $ = cheerio.load(data);
 
       const movies = [];
-      $("div.blog-posts div.post-outer").each((i, el) => {
+      $("div.blog-posts div.post-outer, div.post-outer").each((i, el) => {
         const titleEl = $(el).find("h3.post-title a");
-        const title = titleEl.length ? titleEl.text().trim() : "Unknown";
+        const title = titleEl.text().trim();
         const link = titleEl.attr("href") || "";
         const image = $(el).find("div.post-body img").attr("src") || "";
         const date = $(el).find("h2.date-header span").text().trim() || "";
@@ -71,7 +75,7 @@ export default async function handler(req, res) {
       return res.json({ status: true, data: movies });
     }
 
-    // ---------- MOVIE DETAILS ----------
+    // ---------------- MOVIE DETAILS ----------------
     if (action === "movie") {
       if (!url) return res.status(400).json({ status: false, message: "url missing" });
 
@@ -79,7 +83,7 @@ export default async function handler(req, res) {
       const $ = cheerio.load(data);
 
       const titleEl = $("h3.post-title a");
-      const title = titleEl.length ? titleEl.text().trim() : "Unknown";
+      const title = titleEl.text().trim() || "Unknown";
       const yearMatch = title.match(/\d{4}/);
       const year = yearMatch ? yearMatch[0] : "";
 
