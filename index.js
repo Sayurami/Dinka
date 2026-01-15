@@ -5,12 +5,13 @@ export default async function handler(req, res) {
   try {
     const { action, query, url } = req.query;
     const headers = {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+      "Referer": "https://dinkamovieslk.blogspot.com/"
     };
 
     if (!action) return res.status(400).json({ status: false, message: "action missing" });
 
-    // ---------------- 1. SEARCH (JSON FEED) ----------------
+    // ---------------- 1. SEARCH ----------------
     if (action === "search") {
       const feedUrl = `https://dinkamovieslk.blogspot.com/feeds/posts/default?q=${encodeURIComponent(query)}&alt=json&max-results=10`;
       const { data } = await axios.get(feedUrl, { headers });
@@ -29,62 +30,53 @@ export default async function handler(req, res) {
 
       const { data: html } = await axios.get(url, { headers });
       const $ = cheerio.load(html);
+      const postContent = $("div.post-body").html() || ""; // මුළු පෝස්ට් එකේම HTML එක
 
       const title = $(".post-title").first().text().trim() || $("h1").text().trim();
       const dl_links = [];
 
-      // සයිට් එකේ තියෙන හැම ලින්ක් එකක්ම සෝදිසි කිරීම
+      // ලින්ක්ස් සෙවීමේ ප්‍රධාන ලොජික් එක
+      // 1. Regex එකක් මගින් HTML එක ඇතුළේ තියෙන සියලුම da.gd ලින්ක්ස් සොයා ගැනීම
+      const shortLinkRegex = /https:\/\/da\.gd\/[a-zA-Z0-9]+/g;
+      const shortLinks = postContent.match(shortLinkRegex) || [];
+      
+      shortLinks.forEach(link => {
+        if (!dl_links.some(l => l.direct_link === link)) {
+          dl_links.push({ quality: "Direct Download", direct_link: link });
+        }
+      });
+
+      // 2. Vercel Encoded ලින්ක්ස් පරීක්ෂාව
       $("a").each((i, el) => {
         const href = $(el).attr("href") || "";
-        const text = $(el).text().trim();
-        const htmlContent = $(el).html() || "";
-
-        // වැරදි ලින්ක් (Home page, Telegram, WhatsApp) අතහැරීම
-        if (
-          href === "https://dinkamovieslk.blogspot.com/" || 
-          href.includes("t.me") || 
-          href.includes("whatsapp.com") || 
-          href.includes("facebook.com")
-        ) {
-          return; 
-        }
-
-        // ක්‍රමය A: Vercel Base64 ලින්ක් (අලුත් පෝස්ට් වලට)
         if (href.includes("vercel.app") && href.includes("data=")) {
           try {
             const encodedData = new URL(href).searchParams.get("data");
             const decoded = JSON.parse(Buffer.from(encodedData, 'base64').toString());
-            if (decoded.u) {
-              dl_links.push({ quality: text || "Download Now", direct_link: decoded.u });
+            if (decoded.u && !dl_links.some(l => l.direct_link === decoded.u)) {
+              dl_links.push({ quality: "Encoded Download", direct_link: decoded.u });
             }
           } catch (e) {}
         }
-
-        // ක්‍රමය B: 'da.gd' වැනි Short ලින්ක් (පැරණි පෝස්ට් වලට)
-        else if (href.includes("da.gd")) {
-          dl_links.push({ quality: "Download (" + (text || "Link") + ")", direct_link: href });
-        }
-
-        // ක්‍රමය C: "Download" පින්තූරයක් ඇතුළේ ඇති ලින්ක්
-        else if (htmlContent.toLowerCase().includes("download") && href.startsWith("http")) {
-            if (!dl_links.some(l => l.direct_link === href)) {
-              dl_links.push({ quality: "Download Link", direct_link: href });
-            }
-        }
       });
 
-      // Cast (නළු නිළියන්)
+      // 3. Cast (නළු නිළියන්) - ටිකක් වෙනස් විදිහකට සෙවීම
       const cast = [];
-      $("div.post-body").find("li, p").each((i, el) => {
+      $(".post-body").find("li, p, div").each((i, el) => {
         const txt = $(el).text().trim();
-        if (txt.includes(":") && txt.length < 60) cast.push(txt);
+        // නමක් සහ චරිතයක් තියෙන පේළි අහුලගමු
+        if ((txt.includes(":") || txt.includes("-")) && txt.length < 50 && txt.length > 5) {
+          if(!txt.toLowerCase().includes("download") && !txt.toLowerCase().includes("upload")) {
+             cast.push(txt);
+          }
+        }
       });
 
       return res.json({
         status: true,
         data: {
           title,
-          cast: [...new Set(cast)],
+          cast: [...new Set(cast)].slice(0, 10),
           download_links: dl_links
         }
       });
