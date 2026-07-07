@@ -269,6 +269,10 @@ export default async function handler(req, res) {
     // ─────────────────────────────────────────────────────────────
     // 5. RESOLVE REAL DOWNLOAD LINKS from dl.dinkamovieslk.app
     //    ?action=resolve&url=https://dl.dinkamovieslk.app/?data=...
+    //
+    //    Strategy: ZenRows JS render → suppress ad popup → wait 13s
+    //    for countdown → click #dlBtn → browser navigates to real
+    //    link (GDrive / Pixeldrain / Mega) → extract final URL.
     // ─────────────────────────────────────────────────────────────
     if (action === "resolve") {
       if (!url)
@@ -281,56 +285,94 @@ export default async function handler(req, res) {
       } catch {
         return res.status(400).json({ status: false, message: "invalid url" });
       }
-      if (parsedDl.hostname !== "dl.dinkamovieslk.app") {
+      if (parsedDl.protocol !== "https:" || parsedDl.hostname !== "dl.dinkamovieslk.app") {
         return res.status(400).json({
           status: false,
-          message: "url must be on dl.dinkamovieslk.app"
+          message: "url must be a valid https URL on dl.dinkamovieslk.app"
         });
       }
 
-      const SCRAPER_KEY = process.env.SCRAPER_API_KEY || "f9ea79e7589a5989220a0c27509c0bf0";
+      const ZENROWS_KEY = process.env.ZENROWS_API_KEY;
+      if (!ZENROWS_KEY) {
+        return res.status(500).json({ status: false, error: "ZENROWS_API_KEY not configured" });
+      }
 
-      // Use ScraperAPI with JS rendering to bypass Cloudflare + run countdown JS
-      const scraperUrl = `http://api.scraperapi.com/?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&render=true&wait=10000`;
-      const { data: dlHtml } = await axios.get(scraperUrl, { timeout: 60000 });
+      // js_instructions:
+      //  1. Suppress ad pop-up that fires on button click
+      //  2. Wait 13s (10s countdown + 3s buffer)
+      //  3. Click the download button — page does window.location.replace(realUrl)
+      //  4. Wait 3s for navigation to complete
+      //  5. Evaluate final document.location.href to capture the real URL
+      const jsInstructions = JSON.stringify([
+        { evaluate: "window.open = function(){}; window._capturedUrl = null; var _origReplace = window.location.replace.bind(window.location); window.location.replace = function(u){ window._capturedUrl = u; _origReplace(u); };" },
+        { wait: 13000 },
+        { click: "#dlBtn" },
+        { wait: 3000 },
+        { evaluate: "window._capturedUrl || document.location.href" }
+      ]);
+
+      const zenrowsUrl = `https://api.zenrows.com/v1/?apikey=${ZENROWS_KEY}&url=${encodeURIComponent(url)}&js_render=true&js_instructions=${encodeURIComponent(jsInstructions)}`;
+      const { data: dlHtml } = await axios.get(zenrowsUrl, { timeout: 90000 });
+
+      // ------------------------------------------------------------------
+      // Extract the real download URL from the resolved page.
+      // After clicking the button the ZenRows browser follows the redirect,
+      // so the returned HTML is from the destination (GDrive, Pixeldrain…).
+      // We pull the canonical / og:url first, then fall back to URL patterns.
+      // ------------------------------------------------------------------
       const $dl = cheerio.load(dlHtml);
 
-      const real_links = [];
+      // Canonical URL meta tags set by GDrive / Pixeldrain etc.
+      let resolvedUrl =
+        $dl("meta[property='og:url']").attr("content") ||
+        $dl("link[rel='canonical']").attr("href") ||
+        null;
 
-      // Scrape all download buttons on the resolved page
-      $dl("a").each((_, el) => {
-        const href = $dl(el).attr("href") || "";
-        const text = $dl(el).text().replace(/\s+/g, " ").trim();
-
-        if (!href.startsWith("http")) return;
-        // Skip Telegram, WhatsApp social links
-        if (
-          href.includes("t.me") ||
-          href.includes("telegram.me") ||
-          href.includes("whatsapp.com") ||
-          href.includes("facebook.com") ||
-          href.includes("dinkamovieslk.app")
-        ) return;
-
-        if (!real_links.some((l) => l.link === href)) {
-          real_links.push({ label: text || "Download", link: href });
+      // If no meta tag, try regex on raw HTML for known hosts
+      if (!resolvedUrl) {
+        const patterns = [
+          /https:\/\/drive\.google\.com\/file\/d\/[^"'\s&]+/,
+          /https:\/\/mega\.nz\/[^"'\s]+/,
+          /https:\/\/pixeldrain\.com\/[^"'\s]+/,
+          /https:\/\/www\.mediafire\.com\/[^"'\s]+/,
+          /https:\/\/1drv\.ms\/[^"'\s]+/,
+          /https:\/\/gofile\.io\/[^"'\s]+/,
+        ];
+        for (const pat of patterns) {
+          const m = dlHtml.match(pat);
+          if (m) { resolvedUrl = m[0].split('"')[0].split("'")[0]; break; }
         }
-      });
+      }
 
-      // Also check for WhatsApp download links (wa.me or chat.whatsapp.com direct file links)
-      $dl("a[href*='wa.me'], a[href*='chat.whatsapp.com']").each((_, el) => {
-        const href = $dl(el).attr("href") || "";
-        const text = $dl(el).text().replace(/\s+/g, " ").trim();
-        if (href && !real_links.some((l) => l.link === href)) {
-          real_links.push({ label: text || "WhatsApp Download", link: href });
-        }
-      });
+      // Determine link type label
+      let linkType = "direct";
+      if (resolvedUrl) {
+        if (resolvedUrl.includes("drive.google.com")) linkType = "gdrive";
+        else if (resolvedUrl.includes("mega.nz")) linkType = "mega";
+        else if (resolvedUrl.includes("pixeldrain.com")) linkType = "pixeldrain";
+        else if (resolvedUrl.includes("mediafire.com")) linkType = "mediafire";
+      }
+
+      // Page title from the destination (e.g. "filename.mp4 - Google Drive")
+      const pageTitle = $dl("title").first().text().trim() || null;
+
+      if (!resolvedUrl) {
+        return res.json({
+          status: false,
+          source: url,
+          error: "Could not extract real URL — page structure may have changed",
+          page_title: pageTitle
+        });
+      }
 
       return res.json({
         status: true,
         source: url,
-        data: real_links,
-        note: real_links.length === 0 ? "No links found — page may still be loading or structure changed" : undefined
+        data: {
+          link: resolvedUrl,
+          type: linkType,
+          page_title: pageTitle
+        }
       });
     }
 
