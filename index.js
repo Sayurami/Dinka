@@ -236,26 +236,12 @@ export default async function handler(req, res) {
         });
       }
 
-      // Labels — only from the post's own label section (not sidebar)
-      // The post labels are inside .post-labels or links with /search/label/ inside post content
+      // Labels — post uses class="m-card" for its own genre tags (not sidebar)
       const labels = [];
-      // Try post-specific label container first
-      const labelContainer = $(".post-labels, .post-footer, [data-labels]");
-      const labelScope = labelContainer.length ? labelContainer : $(".post-body, article");
-      labelScope.find("a[href*='/search/label/']").each((_, el) => {
-        const raw = $(el).text().trim();
-        // Strip count suffix like "\n(49)" or " (49)"
-        const lbl = raw.replace(/\s*\(\d+\)\s*$/g, "").replace(/\s+/g, " ").trim();
+      $("a.m-card[href*='/search/label/']").each((_, el) => {
+        const lbl = $(el).text().replace(/\s+/g, " ").trim();
         if (lbl && !labels.includes(lbl)) labels.push(lbl);
       });
-      // Fallback: all label links but strip counts
-      if (labels.length === 0) {
-        $("a[href*='/search/label/']").each((_, el) => {
-          const raw = $(el).text().trim();
-          const lbl = raw.replace(/\s*\(\d+\)\s*$/g, "").replace(/\s+/g, " ").trim();
-          if (lbl && !labels.includes(lbl)) labels.push(lbl);
-        });
-      }
 
       // Basic metadata from info-box (year, runtime, genre etc.)
       const meta = {};
@@ -280,10 +266,81 @@ export default async function handler(req, res) {
       });
     }
 
+    // ─────────────────────────────────────────────────────────────
+    // 5. RESOLVE REAL DOWNLOAD LINKS from dl.dinkamovieslk.app
+    //    ?action=resolve&url=https://dl.dinkamovieslk.app/?data=...
+    // ─────────────────────────────────────────────────────────────
+    if (action === "resolve") {
+      if (!url)
+        return res.status(400).json({ status: false, message: "url missing" });
+
+      // Only allow dl.dinkamovieslk.app links
+      let parsedDl;
+      try {
+        parsedDl = new URL(url);
+      } catch {
+        return res.status(400).json({ status: false, message: "invalid url" });
+      }
+      if (parsedDl.hostname !== "dl.dinkamovieslk.app") {
+        return res.status(400).json({
+          status: false,
+          message: "url must be on dl.dinkamovieslk.app"
+        });
+      }
+
+      const SCRAPER_KEY = process.env.SCRAPER_API_KEY;
+      if (!SCRAPER_KEY) {
+        return res.status(500).json({ status: false, error: "ScraperAPI key not configured" });
+      }
+
+      // Use ScraperAPI with JS rendering to bypass Cloudflare + run countdown JS
+      const scraperUrl = `http://api.scraperapi.com/?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&render=true&wait=10000`;
+      const { data: dlHtml } = await axios.get(scraperUrl, { timeout: 60000 });
+      const $dl = cheerio.load(dlHtml);
+
+      const real_links = [];
+
+      // Scrape all download buttons on the resolved page
+      $dl("a").each((_, el) => {
+        const href = $dl(el).attr("href") || "";
+        const text = $dl(el).text().replace(/\s+/g, " ").trim();
+
+        if (!href.startsWith("http")) return;
+        // Skip Telegram, WhatsApp social links
+        if (
+          href.includes("t.me") ||
+          href.includes("telegram.me") ||
+          href.includes("whatsapp.com") ||
+          href.includes("facebook.com") ||
+          href.includes("dinkamovieslk.app")
+        ) return;
+
+        if (!real_links.some((l) => l.link === href)) {
+          real_links.push({ label: text || "Download", link: href });
+        }
+      });
+
+      // Also check for WhatsApp download links (wa.me or chat.whatsapp.com direct file links)
+      $dl("a[href*='wa.me'], a[href*='chat.whatsapp.com']").each((_, el) => {
+        const href = $dl(el).attr("href") || "";
+        const text = $dl(el).text().replace(/\s+/g, " ").trim();
+        if (href && !real_links.some((l) => l.link === href)) {
+          real_links.push({ label: text || "WhatsApp Download", link: href });
+        }
+      });
+
+      return res.json({
+        status: true,
+        source: url,
+        data: real_links,
+        note: real_links.length === 0 ? "No links found — page may still be loading or structure changed" : undefined
+      });
+    }
+
     // Unknown action
     return res.status(400).json({
       status: false,
-      message: `Unknown action '${action}'. Available: search, latest, movie, label`
+      message: `Unknown action '${action}'. Available: search, latest, movie, label, resolve`
     });
 
   } catch (err) {
