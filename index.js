@@ -288,10 +288,7 @@ export default async function handler(req, res) {
         });
       }
 
-      const SCRAPER_KEY = process.env.SCRAPER_API_KEY;
-      if (!SCRAPER_KEY) {
-        return res.status(500).json({ status: false, error: "ScraperAPI key not configured" });
-      }
+      const SCRAPER_KEY = process.env.SCRAPER_API_KEY || "f9ea79e7589a5989220a0c27509c0bf0";
 
       // Use ScraperAPI with JS rendering to bypass Cloudflare + run countdown JS
       const scraperUrl = `http://api.scraperapi.com/?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&render=true&wait=10000`;
