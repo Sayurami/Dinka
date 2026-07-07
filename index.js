@@ -184,11 +184,30 @@ export default async function handler(req, res) {
 
       // Download links — new site uses class="dl-btn"
       const dl_links = [];
+      let watch_link = "";
 
       $("a.dl-btn").each((_, el) => {
         const href = $(el).attr("href") || "";
         const text = $(el).text().replace(/\s+/g, " ").trim();
-        if (href && href.startsWith("http") && !dl_links.some((l) => l.link === href)) {
+
+        if (!href || !href.startsWith("http")) return;
+        // Skip Telegram, WhatsApp, Facebook links
+        if (
+          href.includes("t.me") ||
+          href.includes("telegram.me") ||
+          href.includes("whatsapp.com") ||
+          href.includes("facebook.com")
+        ) return;
+        // Separate watch/stream links from download links
+        if (
+          text.toLowerCase() === "watch" ||
+          href.includes("/p/") && href.includes("watch")
+        ) {
+          if (!watch_link) watch_link = href;
+          return;
+        }
+
+        if (!dl_links.some((l) => l.link === href)) {
           dl_links.push({ quality: text || "Download", link: href });
         }
       });
@@ -200,12 +219,13 @@ export default async function handler(req, res) {
           const text = $(el).text().replace(/\s+/g, " ").trim();
 
           if (
+            !href.startsWith("http") ||
             href === BASE + "/" ||
             href.includes("t.me") ||
+            href.includes("telegram.me") ||
             href.includes("whatsapp.com") ||
             href.includes("facebook.com") ||
-            href.includes(BASE + "/search") ||
-            !href.startsWith("http")
+            href.includes(BASE + "/search")
           ) return;
 
           if (href.includes("da.gd") || href.includes("dl.dinkamovieslk.app")) {
@@ -216,12 +236,26 @@ export default async function handler(req, res) {
         });
       }
 
-      // Labels / categories
+      // Labels — only from the post's own label section (not sidebar)
+      // The post labels are inside .post-labels or links with /search/label/ inside post content
       const labels = [];
-      $("a[href*='/search/label/']").each((_, el) => {
-        const lbl = $(el).text().trim();
+      // Try post-specific label container first
+      const labelContainer = $(".post-labels, .post-footer, [data-labels]");
+      const labelScope = labelContainer.length ? labelContainer : $(".post-body, article");
+      labelScope.find("a[href*='/search/label/']").each((_, el) => {
+        const raw = $(el).text().trim();
+        // Strip count suffix like "\n(49)" or " (49)"
+        const lbl = raw.replace(/\s*\(\d+\)\s*$/g, "").replace(/\s+/g, " ").trim();
         if (lbl && !labels.includes(lbl)) labels.push(lbl);
       });
+      // Fallback: all label links but strip counts
+      if (labels.length === 0) {
+        $("a[href*='/search/label/']").each((_, el) => {
+          const raw = $(el).text().trim();
+          const lbl = raw.replace(/\s*\(\d+\)\s*$/g, "").replace(/\s+/g, " ").trim();
+          if (lbl && !labels.includes(lbl)) labels.push(lbl);
+        });
+      }
 
       // Basic metadata from info-box (year, runtime, genre etc.)
       const meta = {};
@@ -240,6 +274,7 @@ export default async function handler(req, res) {
           poster,
           labels,
           meta,
+          watch_link: watch_link || null,
           download_links: dl_links
         }
       });
