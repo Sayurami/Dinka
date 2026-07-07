@@ -292,10 +292,7 @@ export default async function handler(req, res) {
         });
       }
 
-      const ZENROWS_KEY = process.env.ZENROWS_API_KEY;
-      if (!ZENROWS_KEY) {
-        return res.status(500).json({ status: false, error: "ZENROWS_API_KEY not configured" });
-      }
+      const ZENROWS_KEY = process.env.ZENROWS_API_KEY || "75bdab6643e5c9a8a0523ee4a544b263a87fc17d";
 
       // js_instructions:
       //  1. Suppress ad pop-up that fires on button click
